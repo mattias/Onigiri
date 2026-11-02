@@ -28,7 +28,13 @@
 
         if (!sidebar || !header || !expandedContent || !deckListContainer) return;
         if (header.parentElement !== expandedContent) {
-            expandedContent.insertBefore(header, deckListContainer);
+            // The deck list can be wrapped (e.g. inside the sidebar list
+            // section), so insert before its child of expandedContent.
+            let anchor = deckListContainer;
+            while (anchor && anchor.parentElement !== expandedContent) {
+                anchor = anchor.parentElement;
+            }
+            expandedContent.insertBefore(header, anchor || null);
         }
     }
 
