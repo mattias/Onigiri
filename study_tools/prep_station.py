@@ -35,6 +35,7 @@ from .prep_station_math import (
     FsrsSettings,
     ProjectionCard,
     calculate_plan_projection,
+    effective_retention,
     evenly_spaced_arrival_days,
 )
 from ..core.translations import tr, current_locale
@@ -273,6 +274,13 @@ def _fsrs_settings_for_deck(deck_id: int) -> FsrsSettings:
     )
 
 
+def _optional_float(value) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _card_due_day(queue: int, due: int, original_due: int, sched_today: int) -> int:
     effective_due = int(original_due or due or 0)
     if queue in (1, 3) and effective_due > 100_000_000:
@@ -326,6 +334,8 @@ def _plan_projection_cards(deck_names: list) -> tuple[list, dict, list[int]]:
                 max(1, int(left or 0) % 1000) if int(card_type) in (1, 3) else 0
             ),
             settings=settings_by_did.get(did, FsrsSettings()),
+            desired_retention=_optional_float(data.get("dr")),
+            decay=_optional_float(data.get("decay")),
         ))
     return cards, settings_by_did, dids
 
@@ -447,7 +457,7 @@ def _enrich_plan(plan: dict) -> dict:
         include_susp = _include_suspended()
         total_pending = int(projection["mature_gap"])
         retention_values = [
-            card.settings.desired_retention for card in cards + future_cards
+            effective_retention(card) for card in cards + future_cards
         ]
         if not retention_values:
             retention_values = [

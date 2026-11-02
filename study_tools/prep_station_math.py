@@ -73,6 +73,11 @@ class ProjectionCard:
     is_new: bool = False
     learning_steps_remaining: int = 0
     settings: FsrsSettings = FsrsSettings()
+    # Per-card FSRS values stored by Anki in card data ("dr" / "decay").
+    # Dynamic desired retention (e.g. the JSchoreels Anki fork) gives each
+    # card its own retention, so these take precedence over the preset.
+    desired_retention: float | None = None
+    decay: float | None = None
 
 
 @dataclass(frozen=True)
@@ -195,14 +200,22 @@ def _learning_review_days(steps: Sequence[float], remaining: int) -> list[int]:
     return offsets
 
 
+def effective_retention(card: ProjectionCard) -> float:
+    """The card's own desired retention when known, else its preset's."""
+
+    if card.desired_retention:
+        return clamp_retention(card.desired_retention)
+    return clamp_retention(card.settings.desired_retention)
+
+
 def project_card(card: ProjectionCard, horizon_days: int) -> CardPath:
     """Project one card along its expected FSRS Good-answer path."""
 
     horizon = max(0, int(horizon_days))
     settings = normalized_settings(card.settings)
     params = settings.parameters
-    retention = settings.desired_retention
-    decay = max(0.01, float(params[20]))
+    retention = effective_retention(card)
+    decay = max(0.01, float(card.decay or params[20]))
     day = max(0, int(card.due_day))
     stability = card.stability
     difficulty = card.difficulty

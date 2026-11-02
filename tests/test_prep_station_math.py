@@ -4,6 +4,7 @@ from study_tools.prep_station_math import (
     FsrsSettings,
     ProjectionCard,
     calculate_plan_projection,
+    effective_retention,
     evenly_spaced_arrival_days,
     project_card,
 )
@@ -61,6 +62,25 @@ class PrepStationMathTests(unittest.TestCase):
         self.assertTrue(result["feasible"])
         self.assertGreater(result["workload_reviews"], 0)
         self.assertGreater(result["expected_mature_from_scheduled"], 1)
+
+    def test_card_desired_retention_overrides_preset(self):
+        preset = FsrsSettings(desired_retention=0.80)
+        per_card = project_card(
+            ProjectionCard(is_new=True, settings=preset, desired_retention=0.95),
+            60,
+        )
+        high = project_card(
+            ProjectionCard(
+                is_new=True,
+                settings=FsrsSettings(desired_retention=0.95),
+            ),
+            60,
+        )
+
+        self.assertEqual(per_card, high)
+        self.assertEqual(
+            effective_retention(ProjectionCard(settings=preset)), 0.80
+        )
 
 
 if __name__ == "__main__":
