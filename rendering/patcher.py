@@ -2484,6 +2484,10 @@ def patch_overview():
     
 	def new_table(self) -> str:
 		counts = list(self.mw.col.sched.counts())
+		if getattr(self, "_rwkv_counts_pending", False):
+			# JSchoreels Anki fork: RWKV review counts are still being scored
+			# in the background; show the same placeholder as Anki does.
+			counts[2] = "…"
 		deck_progress_html = overview_stats.render_deck_overview_stats(
 			self.mw.col, surface="overview"
 		)
