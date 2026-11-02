@@ -1,0 +1,61 @@
+# Opens an issue (and so a GitHub notification) when this fork may need an
+# update: a new upstream Onigiri release, or a new Anki base version in the
+# JSchoreels fork. Individual JSchoreels ".build.N" releases are ignored.
+# After updating the fork, bump .github/upstream-baseline.json.
+name: Watch upstream
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare upstream releases with baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTIFY: "@mattias"
+        run: |
+          set -euo pipefail
+          baseline=.github/upstream-baseline.json
+          known_onigiri=$(jq -r .onigiri "$baseline")
+          known_anki=$(jq -r .anki_base "$baseline")
+
+          onigiri=$(gh release view -R thepeacemonk/Onigiri --json tagName -q .tagName)
+          anki_tag=$(gh release list -R JSchoreels/anki -L 1 --exclude-pre-releases \
+            --json tagName -q '.[0].tagName')
+          anki_base=${anki_tag%%.build.*}
+          echo "Onigiri: $onigiri (baseline $known_onigiri)"
+          echo "JSchoreels Anki: $anki_tag -> base $anki_base (baseline $known_anki)"
+
+          open_issue() {
+            local title=$1 body=$2
+            if gh issue list -R "$GITHUB_REPOSITORY" --state all --limit 200 \
+                --json title -q '.[].title' | grep -Fxq "$title"; then
+              echo "Issue already exists: $title"
+            else
+              gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            fi
+          }
+
+          if [ "$onigiri" != "$known_onigiri" ]; then
+            open_issue "Upstream Onigiri released $onigiri" \
+          "$NOTIFY New upstream release: https://github.com/thepeacemonk/Onigiri/releases/tag/$onigiri
+
+          Merge it into \`jschoreels-fork\`, rebuild with \`tools/build_addon.py\`, test on the JSchoreels fork, publish a new release and update \`.github/upstream-baseline.json\`."
+          fi
+
+          if [ "$anki_base" != "$known_anki" ]; then
+            open_issue "JSchoreels Anki moved to $anki_base" \
+          "$NOTIFY The JSchoreels fork has a new Anki base: https://github.com/JSchoreels/anki/releases/tag/$anki_tag
+
+          Check Onigiri against it (hooks, \`RenderDeckNodeContext\`, sync, FSRS config), bump \`max_point_version\` if needed, release and update \`.github/upstream-baseline.json\`."
+          fi
