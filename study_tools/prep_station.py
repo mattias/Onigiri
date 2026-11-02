@@ -32,6 +32,8 @@ from ..rendering.theme_palette import utility_chrome_palette
 from .prep_station_math import (
     DEFAULT_DESIRED_RETENTION,
     DEFAULT_FSRS_PARAMETERS,
+    DEFAULT_FSRS7_PARAMETERS,
+    FSRS7_PARAMETER_COUNT,
     FsrsSettings,
     ProjectionCard,
     calculate_plan_projection,
@@ -230,6 +232,37 @@ def _selected_deck_ids(deck_names: list) -> list[int]:
         return []
 
 
+def _anki_supports_fsrs7() -> bool:
+    """Whether this Anki build schedules with FSRS-7 (JSchoreels fork)."""
+
+    try:
+        from anki import deck_config_pb2
+
+        return hasattr(deck_config_pb2.DeckConfig.Config, "FSRS_VERSION_SEVEN")
+    except Exception:
+        return False
+
+
+def _fork_fsrs_field(conf: dict, camel_key: str, snake_key: str):
+    """Read a fork deck-config field from the top level or its "jschoreels.fsrs"
+    blob, the way the fork's own aqt.main reads fsrs_params_7."""
+
+    for source in (conf, conf.get("jschoreels.fsrs"), (conf.get("other") or {}).get("jschoreels.fsrs")):
+        if isinstance(source, dict):
+            value = source.get(camel_key, source.get(snake_key))
+            if value is not None:
+                return value
+    return None
+
+
+def _uses_fsrs7(conf: dict) -> bool:
+    # FsrsVersion.SEVEN is 0 and is the default when the field is absent.
+    if not _anki_supports_fsrs7():
+        return False
+    version = _fork_fsrs_field(conf, "fsrsVersion", "fsrs_version")
+    return int(version or 0) == 0
+
+
 def _fsrs_settings_for_deck(deck_id: int) -> FsrsSettings:
     """Read the effective FSRS preset used by a deck.
 
@@ -251,15 +284,25 @@ def _fsrs_settings_for_deck(deck_id: int) -> FsrsSettings:
             or conf.get("desired_retention")
             or DEFAULT_DESIRED_RETENTION
         )
-        raw_params = (
-            conf.get("fsrsParams6")
-            or conf.get("fsrs_params_6")
-            or conf.get("fsrsWeights")
-            or conf.get("fsrs_weights")
-            or ()
-        )
-        if len(raw_params) == 21:
-            params = tuple(float(value) for value in raw_params)
+        if _uses_fsrs7(conf):
+            # Mirrors the fork's DeckConfig::fsrs_params(): unusable FSRS-7
+            # parameters fall back to the FSRS-7 defaults.
+            raw_params = _fork_fsrs_field(conf, "fsrsParams7", "fsrs_params_7") or ()
+            params = DEFAULT_FSRS7_PARAMETERS
+            if len(raw_params) == FSRS7_PARAMETER_COUNT and all(
+                math.isfinite(float(value)) for value in raw_params
+            ):
+                params = tuple(float(value) for value in raw_params)
+        else:
+            raw_params = (
+                conf.get("fsrsParams6")
+                or conf.get("fsrs_params_6")
+                or conf.get("fsrsWeights")
+                or conf.get("fsrs_weights")
+                or ()
+            )
+            if len(raw_params) == 21:
+                params = tuple(float(value) for value in raw_params)
         raw_steps = (conf.get("new") or {}).get("delays")
         if isinstance(raw_steps, (list, tuple)):
             learning_steps = tuple(float(value) for value in raw_steps)
@@ -334,6 +377,7 @@ def _plan_projection_cards(deck_names: list) -> tuple[list, dict, list[int]]:
                 max(1, int(left or 0) % 1000) if int(card_type) in (1, 3) else 0
             ),
             settings=settings_by_did.get(did, FsrsSettings()),
+            stability_fast=_optional_float(data.get("s_fast")),
             desired_retention=_optional_float(data.get("dr")),
             decay=_optional_float(data.get("decay")),
         ))
