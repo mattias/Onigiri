@@ -2313,13 +2313,19 @@ def _push_sidebar_sync_result(kind: str) -> None:
             pass
 
 
-def _ad_sync_collection_silent(mw_arg: Any, on_done) -> None:
+def _ad_sync_collection_silent(
+    mw_arg: Any, on_done, on_remote_collection_changed=None
+) -> None:
     """Drop-in for `aqt.sync.sync_collection` — no modal, no tooltip.
 
     Calls `mw.col.sync_collection(auth, media_enabled)` directly through
     `taskman.run_in_background`, polls `latest_progress().normal_sync`
     every 150 ms, and routes the result to the sidebar. Full-sync paths
-    still delegate to `aqt.sync.full_sync` (which owns its own dialog)."""
+    still delegate to `aqt.sync.full_sync` (which owns its own dialog).
+
+    `on_remote_collection_changed(bool)` mirrors the JSchoreels Anki fork's
+    `sync_collection` callback, so its RWKV state can be refreshed after a
+    sync that pulled in remote changes."""
     from aqt.sync import full_sync as _full_sync, handle_sync_error
     from aqt.qt import QTimer, qconnect
     from aqt.utils import showText
@@ -2345,6 +2351,20 @@ def _ad_sync_collection_silent(mw_arg: Any, on_done) -> None:
             pass
     qconnect(timer.timeout, on_timer)
     timer.start(150)
+
+    def report_remote_changes(changed: bool) -> None:
+        if on_remote_collection_changed is None:
+            return
+        try:
+            on_remote_collection_changed(bool(changed))
+        except Exception:
+            pass
+
+    def on_full_sync_done(changed: bool = False) -> None:
+        # Upstream Anki calls on_done() with no arguments; the JSchoreels
+        # fork passes whether the full sync replaced the collection.
+        report_remote_changes(changed)
+        on_done()
 
     def on_future_done(fut) -> None:
         try:
@@ -2377,13 +2397,14 @@ def _ad_sync_collection_silent(mw_arg: Any, on_done) -> None:
                 mw_arg.media_syncer.start_monitoring()
             except Exception:
                 pass
+            report_remote_changes(getattr(out, "remote_collection_changed", False))
             return on_done()
         else:
             # Full upload/download paths legitimately need a confirmation
             # dialog — fall back to Anki's native flow. The sidebar's
             # "active" pulse is cleared by on_done()'s gui_hooks.sync_did_finish.
             _push_sidebar_sync_result("ok")
-            _full_sync(mw_arg, out, on_done)
+            _full_sync(mw_arg, out, on_full_sync_done)
 
     mw_arg.taskman.run_in_background(
         lambda: mw_arg.col.sync_collection(auth, mw_arg.pm.media_syncing_enabled()),
@@ -2401,10 +2422,30 @@ def _install_silent_sync() -> None:
 
     orig = getattr(mw, "_sync_collection_and_media", None)
 
-    def _silent(self, after_sync) -> None:
+    def _silent(self, after_sync, **kwargs) -> None:
+        # The JSchoreels Anki fork passes `refresh_rwkv_state=` here (e.g.
+        # from maybe_auto_sync_on_open_close); accept and forward it.
         if not _config().get("silent_sync", True) and orig is not None:
             # User prefers Anki's own progress dialog + "Sync complete".
-            return orig(after_sync)
+            return orig(after_sync, **kwargs)
+
+        refresh_rwkv_state = kwargs.get("refresh_rwkv_state", True)
+        remote = {"changed": False}
+
+        def note_remote_collection_changed(changed: bool) -> None:
+            remote["changed"] = changed
+
+        def finish_sync() -> None:
+            if refresh_rwkv_state and remote["changed"]:
+                try:
+                    from aqt import rwkv_scheduler
+                except ImportError:
+                    rwkv_scheduler = None
+                if rwkv_scheduler is not None:
+                    return rwkv_scheduler.refresh_rwkv_state_after_sync(
+                        self, after_sync
+                    )
+            after_sync()
 
         def on_collection_sync_finished() -> None:
             try:
@@ -2416,9 +2457,13 @@ def _install_silent_sync() -> None:
                 self.reset()
             except Exception:
                 pass
-            after_sync()
+            finish_sync()
         gui_hooks.sync_will_start()
-        _ad_sync_collection_silent(self, on_done=on_collection_sync_finished)
+        _ad_sync_collection_silent(
+            self,
+            on_done=on_collection_sync_finished,
+            on_remote_collection_changed=note_remote_collection_changed,
+        )
 
     try:
         mw._sync_collection_and_media = types.MethodType(_silent, mw)
