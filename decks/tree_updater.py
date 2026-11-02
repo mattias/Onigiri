@@ -1,6 +1,7 @@
 import html
 import json
 import os
+from collections import defaultdict
 from urllib.parse import quote
 from aqt import mw
 from aqt.deckbrowser import DeckBrowser, RenderDeckNodeContext
@@ -178,6 +179,30 @@ def _apply_tree_preferences(tree_data) -> None:
     apply_archive_filter(tree_data)
     _apply_active_filters(tree_data)
 
+def _make_render_context(deck_browser: DeckBrowser, tree_data) -> RenderDeckNodeContext:
+    """Build the per-render deck node context for the running Anki build.
+
+    Forks such as JSchoreels/anki (FSRS-7) add required fields to
+    RenderDeckNodeContext, e.g. ``review_limit_labels`` for the "(/total)"
+    review-limit hint. Fill them from the deck browser when present so both
+    Onigiri's and Anki's native node renderers keep working.
+    """
+    kwargs = {"current_deck_id": deck_browser.mw.col.decks.get_current_id()}
+    fields = getattr(RenderDeckNodeContext, "__dataclass_fields__", {})
+    if "review_limit_labels" in fields:
+        labels = {}
+        build_labels = getattr(deck_browser, "_review_limit_labels", None)
+        if build_labels is not None:
+            try:
+                labels = build_labels(tree_data)
+            except Exception as e:
+                print(f"Onigiri: could not build review limit labels: {e}")
+        # Native rendering indexes this by deck id; never raise for decks the
+        # labels were not built for (e.g. search results or filtered trees).
+        kwargs["review_limit_labels"] = defaultdict(lambda: ("", ""), labels)
+    return RenderDeckNodeContext(**kwargs)
+
+
 def _render_deck_tree_html_only(deck_browser: DeckBrowser) -> str:
     """
     Renders just the HTML for the deck tree's <tbody> content.
@@ -191,8 +216,8 @@ def _render_deck_tree_html_only(deck_browser: DeckBrowser) -> str:
         deck_browser._render_data = onigiri_renderer.RenderData(tree=tree_data)
 
     _apply_tree_preferences(tree_data)
-    
-    ctx = RenderDeckNodeContext(current_deck_id=deck_browser.mw.col.decks.get_current_id())
+
+    ctx = _make_render_context(deck_browser, tree_data)
     # Note: _render_deck_node is patched by Onigiri in patcher.py
     return "".join(deck_browser._render_deck_node(child, ctx) for child in tree_data.children)
 
@@ -206,7 +231,7 @@ def _render_deck_search_html(deck_browser: DeckBrowser, query: str) -> str:
 
     tree_data = deck_browser.mw.col.sched.deck_due_tree()
     _apply_tree_preferences(tree_data)
-    ctx = RenderDeckNodeContext(current_deck_id=deck_browser.mw.col.decks.get_current_id())
+    ctx = _make_render_context(deck_browser, tree_data)
     rows = []
 
     def collect_matches(nodes):
