@@ -247,7 +247,7 @@ window.OnigiriEngine = {
         });
 
         this.restoreScrollPosition();
-        this.processNewNodes(tableBody.children); // Process new nodes (for collapse icons etc.)
+        this.processNewNodes(Array.from(tableBody.children)); // Process new nodes (for collapse icons etc.)
         this.updateMultiSelectionVisuals();
 
         if (typeof window.updateDeckLayouts === 'function') {

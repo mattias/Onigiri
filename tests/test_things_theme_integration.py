@@ -55,7 +55,7 @@ class ThingsThemeIntegrationTests(unittest.TestCase):
         self.assertIn("def _render_selected_deck_browser", INIT)
         self.assertIn("def _load_things_theme", INIT)
         self.assertIn("return _anki_render_page", INIT)
-        self.assertIn("return onigiri_renderer.render_onigiri_deck_browser", INIT)
+        self.assertIn("result = onigiri_renderer.render_onigiri_deck_browser", INIT)
         self.assertIn(".on_webview_will_set_content(web_content, context)", INIT)
 
     def test_settings_offer_visual_selector_and_small_customizer(self):

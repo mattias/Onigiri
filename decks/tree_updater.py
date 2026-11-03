@@ -539,6 +539,74 @@ def on_decks_move(data_str: str) -> None:
     except (ValueError, TypeError, json.JSONDecodeError) as e:
         print(f"Onigiri: Could not process deck move request: {e}")
 
+def prepare_rwkv_counts(deck_browser: DeckBrowser) -> tuple:
+    """JSchoreels fork: reset RWKV review counts before the deck list renders.
+
+    Anki's own deck browser clears the scored counts, renders provisional
+    rows marked as pending, then scores each RWKV-enabled deck in the
+    background. Onigiri renders the deck list itself, so it repeats the first
+    step here and starts the scoring with ``start_rwkv_count_refresh``.
+    """
+    try:
+        from aqt import rwkv_scheduler
+    except ImportError:
+        return ()
+    try:
+        deck_browser.cancel_rwkv_count_refresh()
+        rwkv_scheduler.clear_deck_browser_rwkv_count_scores(deck_browser.mw)
+        tree = deck_browser.mw.col.sched.deck_due_tree()
+        scope_ids = rwkv_scheduler.deck_browser_rwkv_count_scope_ids(
+            deck_browser.mw, tree
+        )
+        deck_browser._rwkv_pending_deck_ids = deck_browser._deck_ids_in_rwkv_scopes(
+            tree, scope_ids
+        )
+        return scope_ids
+    except Exception as e:
+        print(f"Onigiri: could not prepare RWKV review counts: {e}")
+        return ()
+
+
+def start_rwkv_count_refresh(deck_browser: DeckBrowser, scope_ids) -> None:
+    """Score RWKV review counts and refresh the deck list as each deck finishes."""
+    if not scope_ids:
+        return
+    try:
+        from aqt import rwkv_scheduler
+    except ImportError:
+        return
+    generation = deck_browser._rwkv_count_generation
+
+    def active() -> bool:
+        return deck_browser._rwkv_count_refresh_active(generation)
+
+    def on_update(scope_id, _tree) -> None:
+        deck_browser._rwkv_pending_deck_ids.difference_update(
+            deck_browser._deck_ids_in_rwkv_scopes(
+                deck_browser._render_data.tree, [scope_id]
+            )
+        )
+        refresh_deck_tree_state(deck_browser)
+
+    def on_done(clear_pending: bool) -> None:
+        if not active():
+            return
+        if clear_pending:
+            deck_browser._rwkv_pending_deck_ids.clear()
+        refresh_deck_tree_state(deck_browser)
+
+    try:
+        rwkv_scheduler.prepare_deck_browser_rwkv_counts_incrementally(
+            deck_browser.mw,
+            scope_ids,
+            should_continue=active,
+            on_update=on_update,
+            on_done=on_done,
+        )
+    except Exception as e:
+        print(f"Onigiri: could not score RWKV review counts: {e}")
+
+
 def refresh_deck_tree_state(deck_browser: DeckBrowser) -> None:
     """
     Handles a full refresh of the deck tree HTML while preserving scroll state.

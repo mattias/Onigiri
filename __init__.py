@@ -1019,9 +1019,14 @@ def _render_selected_deck_browser(deck_browser, *args, **kwargs):
         return _anki_render_page(deck_browser, *args, **kwargs)
     if _shima_theme_selected(conf):
         return shima_theme.render_deck_browser(deck_browser, *args, **kwargs)
-    return onigiri_renderer.render_onigiri_deck_browser(
+    # Like Anki's own renderer, a reuse render keeps the counts already scored.
+    reuse = kwargs.get("reuse", args[0] if args else False)
+    rwkv_scope_ids = () if reuse else deck_tree_updater.prepare_rwkv_counts(deck_browser)
+    result = onigiri_renderer.render_onigiri_deck_browser(
         deck_browser, *args, **kwargs
     )
+    deck_tree_updater.start_rwkv_count_refresh(deck_browser, rwkv_scope_ids)
+    return result
 
 
 def _render_selected_deck_node(deck_browser, *args, **kwargs):

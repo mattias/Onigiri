@@ -8286,6 +8286,9 @@ def _onigiri_render_deck_node(self, node, ctx) -> str:
     new_count = node.new_count
     learn_count = node.learn_count
     review_count = node.review_count
+    # JSchoreels fork: RWKV review counts for this deck are still being scored.
+    if node.deck_id in getattr(self, "_rwkv_pending_deck_ids", ()):
+        review_count = "…"
 
     # --- Counts HTML ---
     counts_html = ""
