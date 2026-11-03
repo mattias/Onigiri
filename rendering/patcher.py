@@ -9669,7 +9669,9 @@ def generate_reviewer_buttons_css(conf):
                     combined = combined.split(timerText).map(part => cleanText(part)).filter(Boolean).join(' ');
                 }
                 const scraped = combined.split('+').map(part => cleanText(part));
-                if (scraped.length === 3 && scraped.every(part => /^\\d+$/.test(part))) {
+                // The JSchoreels fork shows "…" while RWKV rescores the queue and
+                // fills in the real count later through setRemainingCounts().
+                if (scraped.length === 3 && scraped.every(part => /^(\\d+|…)$/.test(part))) {
                     nodes.forEach(node => forceHideNativeNumberElement(node, 'onigiri-stattxt-source'));
                     onigiriLastKnownStats = scraped;
                     return scraped;
@@ -9905,6 +9907,22 @@ def generate_reviewer_buttons_css(conf):
                     render.__onigiriBottomBarRender = true;
                     window[name] = render;
                 });
+                // JSchoreels fork: counts updated after the question is shown
+                // target Anki's native count spans, which the pre-answer pills
+                // replaced. Cache them and force the pills to rebuild.
+                const setCounts = window.setRemainingCounts;
+                if (typeof setCounts === 'function' && !setCounts.__onigiriBottomBarRender) {
+                    const update = function(newCount, learnCount, reviewCount) {
+                        const result = setCounts.apply(this, arguments);
+                        onigiriLastKnownStats = [newCount, learnCount, reviewCount].map(String);
+                        document.querySelectorAll('#outer button[data-onigiri-pre-answer-counts]')
+                            .forEach(btn => btn.removeAttribute('data-onigiri-pre-answer-counts'));
+                        classifyButtons();
+                        return result;
+                    };
+                    update.__onigiriBottomBarRender = true;
+                    window.setRemainingCounts = update;
+                }
             }
             function refresh() {
                 installRenderHooks();
