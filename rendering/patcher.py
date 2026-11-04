@@ -4278,14 +4278,28 @@ def reset_reviewer_progress_session(force=False):
     )
 
 
+def _rwkv_remaining_override():
+    """JSchoreels fork: RWKV-rescored counts for the card on screen.
+
+    Returns ``(pending, counts)``. ``pending`` is true while RWKV is still
+    rescoring the queue; ``counts`` is set once it has finished. Other Anki
+    builds always get ``(False, None)``."""
+    reviewer = getattr(mw, "reviewer", None)
+    override = getattr(reviewer, "_rwkv_remaining_count_override", None)
+    if not override or override[0] != getattr(reviewer, "_review_card_generation", 0):
+        return False, None
+    return override[1] is None, override[1]
+
+
 def _reviewer_progress_counts():
     """{new, learn, review, left, done, total, pct} for the current queue."""
     data = {"new": 0, "learn": 0, "review": 0, "left": 0, "done": 0, "total": 0, "pct": 0}
     col = getattr(mw, "col", None)
     if col is None:
         return data
+    _pending, rwkv_counts = _rwkv_remaining_override()
     try:
-        counts = list(col.sched.counts())
+        counts = list(rwkv_counts if rwkv_counts is not None else col.sched.counts())
     except Exception:
         counts = []
     counts += [0] * (3 - len(counts))
@@ -4632,6 +4646,10 @@ def update_reviewer_progress():
         settings = _reviewer_progress_settings()
         if not settings["enabled"]:
             return
+        # Keep the previous numbers while RWKV rescores; the fork's refresh
+        # callback repaints the gauge once the real counts are known.
+        if _rwkv_remaining_override()[0]:
+            return
         reviewer = getattr(mw, "reviewer", None)
         reviewer_web = reviewer and getattr(reviewer, "web", None)
         if not reviewer_web:
@@ -4746,6 +4764,23 @@ def _on_reviewer_progress_state_change(new_state, old_state):
 
 def _on_reviewer_progress_answered(reviewer, card, ease):
     _progress_session["answered"] += 1
+
+
+def _wrap_rwkv_remaining_count_refresh():
+    """JSchoreels fork: repaint the gauge once RWKV has rescored the queue."""
+    from aqt.reviewer import Reviewer
+
+    original = getattr(Reviewer, "_finish_rwkv_remaining_count_refresh", None)
+    if original is None or getattr(original, "_onigiri_progress", False):
+        return
+
+    def finish(self, *args, **kwargs):
+        result = original(self, *args, **kwargs)
+        update_reviewer_progress()
+        return result
+
+    finish._onigiri_progress = True
+    Reviewer._finish_rwkv_remaining_count_refresh = finish
 
 
 def _on_reviewer_progress_show_question(card):
@@ -8522,7 +8557,8 @@ def apply_patches():
     gui_hooks.state_did_change.append(_on_reviewer_progress_state_change)
     gui_hooks.reviewer_did_answer_card.append(_on_reviewer_progress_answered)
     gui_hooks.reviewer_did_show_question.append(_on_reviewer_progress_show_question)
-    
+    _wrap_rwkv_remaining_count_refresh()
+
     # Mark the hook as registered and update toolbar state
     mw._onigiri_restaurant_hook_registered = True
     mw.progress.single_shot(0, lambda: _update_toolbar_visibility(mw.state, "startup"))
